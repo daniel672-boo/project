@@ -1,18 +1,37 @@
 "use strict";
-const { default: makeWASocket, delay, makeCacheableSignalKeyStore, updateMessageWithPollUpdate, useMultiFileAuthState } = require("./Baileys_x");
+const { default: makeWASocket, delay, getAggregateVotesInPollMessage, makeInMemoryStore, makeCacheableSignalKeyStore, updateMessageWithPollUpdate, useMultiFileAuthState } = require("./Baileys_x");
 const store = {};
 const fs = require("node:fs");
 const cp = require("node:child_process");
 const ytdl = require("./add/node_modules/ytdl-core");
 const { random, ExeCMD, YTUltimateV, YTUltimateA } = require("./functions");
 const ytsearch = require("./add/node_modules/ytsearch-node");
+const ps = require("pino")
+const stores = true ? makeInMemoryStore(ps({level: "silent"})) : undefined 
+stores?.readFromFile('./baileys_store_multi.json')
+// save every 10s
+setInterval(() => {
+	stores?.writeToFile('./baileys_store_multi.json')
+}, 10_000)
+// // https://huggingface.co/spaces/typeofxn60/project
 
-// https://huggingface.co/spaces/typeofxn60/project
 
 const connectOnWhatsApp = async () => {
    const { state, saveCreds } = await useMultiFileAuthState("./session");
+
+   var getMessage = async (jk) => {
+      if(stores) {
+         const msg = await stores.loadMessage(jk.remoteJid, jk.id)
+         return msg?.message || undefined
+      }
+   
+      // only if store is present
+      return {}
+   }
+
    const wpp = makeWASocket({
-      printQRInTerminal: false,
+      printQRInTerminal: true,
+     getMessage,
       auth: {
          keys: makeCacheableSignalKeyStore(state.keys),
          creds: state.creds
@@ -20,11 +39,35 @@ const connectOnWhatsApp = async () => {
    });
 
    // if(!wpp.authState.creds.registered) {
+   //    console.log("ok")
    //    const code = await wpp.requestPairingCode("559984620740")
    //    console.log(`Pairing code: ${code}`)
    // }
-
+   stores?.bind(wpp.ev) 
    wpp.ev.on("creds.update", saveCreds);
+
+   wpp.ev.process(async (events) => {
+      if(events['messages.update']) {
+         console.log(
+            JSON.stringify(events['messages.update'], undefined, 2)
+         )
+         for(const { key, update } of events['messages.update']) {
+            if(update.pollUpdates) {
+               const pollCreation = await getMessage(key)
+               if(pollCreation) {
+                  console.log(
+                     'got poll update, aggregation: ',
+                     getAggregateVotesInPollMessage({
+                        message: pollCreation,
+                        pollUpdates: update.pollUpdates,
+                     })
+                  )
+               }
+            }
+         }
+      }
+   });
+   
    wpp.ev.on("messages.upsert", ({ messages, type: msgType }) => messages.forEach(async ({ message, key, pushName }, id) => { store[key.id] = messages[id];
       try {
          if (key.remoteJid == 'status@broadcast') return;
@@ -49,14 +92,7 @@ const connectOnWhatsApp = async () => {
 
          console.log('\x1b[1;31m~\x1b[1;37m>', (whacmd ? '[\x1b[1;32mEXEC\x1b[1;37m]' : '[\x1b[1;31mRECV\x1b[1;37m]'), timedat, require('chalk').green.underline(whacmd ? whacmd : body || (type ? String(type).slice(0, -7) : 'baileys')), require('chalk').red('from'), require('chalk').green.underline(pushName.toString() || 'no name') + (chat ? (require('chalk').red(' in ') + require('chalk').green.underline(groupName || 'desconhecido...')) : ""));
 
-         wpp.ev.process(async (events) => {
-            if(events['messages.update']) {
-               console.log(
-                  JSON.stringify(events['messages.update'], undefined, 2)
-               )
-            }
-         });
-
+         console.log(messages[id])
          switch (msgType == 'notify' ? whacmd : messages[id].messageSTubTYpe) {
             case "video":
                if (!((store[sender] && store[sender][params-1])   || params.join("").match(/youtu/g))) return _react("✖️");_react("✔");
@@ -83,23 +119,11 @@ const connectOnWhatsApp = async () => {
             break
 
             case "poll":
-               const buttons = [
-                  {buttonId: 'id1', buttonText: {displayText: 'Button 1'}, type: 1},
-                  {buttonId: 'id2', buttonText: {displayText: 'Button 2'}, type: 1},
-                  {buttonId: 'id3', buttonText: {displayText: 'Button 3'}, type: 1}
-                ]
-                
-                const buttonMessage = {
-                    caption: "Hi it's button message",
-                    footer: 'Hello World',
-                    buttons: buttons
-                }
-                
-                 await wpp.sendMessage(from, buttonMessage)
+               wpp.sendMessage(from, { poll: { name: "ass", selectableCount: 1, values: ["a", "b", "c"]}})
             break
 
             case "option":
-               console.log(store[sender][params-1])
+               console.log(JSON.stringify("./baileys_store_multi.json", null, 2))
             break
          };
       }
